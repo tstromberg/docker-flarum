@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+set -x
 
 # Required env variables
 if [ -z "${DB_PASS}" ]; then
@@ -11,8 +12,16 @@ if [ -z "${FORUM_URL}" ]; then
   exit 1
 fi
 
+# Startup Cloud Run proxy
+if [ -n "${CLOUDSQL_INSTANCE}" ]; then  
+  echo "Starting proxy for ${CLOUDSQL_INSTANCE}"
+  /usr/local/bin/cloud_sql_proxy --instances "${CLOUDSQL_INSTANCE}=tcp:3306" &
+
+  mysql -u "${DB_USER}" --host 127.0.0.1 --port 3306 -e "SHOW DATABASES;"
+fi
+
 # Set file config for nginx and php
-sed -i "s/<FLARUM_PORT>/${FLARUM_PORT}/g" /etc/nginx/nginx.conf
+sed -i "s/<PORT>/${PORT}/g" /etc/nginx/nginx.conf
 sed -i "s/<UPLOAD_MAX_SIZE>/${UPLOAD_MAX_SIZE}/g" /etc/nginx/nginx.conf /etc/php7/php-fpm.conf
 sed -i "s/<PHP_MEMORY_LIMIT>/${PHP_MEMORY_LIMIT}/g" /etc/php7/php-fpm.conf
 sed -i "s/<OPCACHE_MEMORY_LIMIT>/${OPCACHE_MEMORY_LIMIT}/g" /etc/php7/conf.d/00_opcache.ini
@@ -122,6 +131,8 @@ else
          -e "s|<FLARUM_ADMIN_MAIL>|${FLARUM_ADMIN_MAIL}|g" \
          -e "s|<FLARUM_TITLE>|${FLARUM_TITLE}|g" /flarum/app/config.yml
 
+  cat /flarum/app/config.yml
+
   # Install flarum
   find /flarum ! -user "${UID}" -exec chown "${UID}:${GID}" {} \;
   find /flarum ! -group "${GID}" -exec chown "${UID}:${GID}" {} \;
@@ -132,5 +143,9 @@ fi
 # Set permissions for /flarum folder
 find /flarum ! -user "${UID}" -exec chown "${UID}:${GID}" {} \;
 find /flarum ! -group "${GID}" -exec chown "${UID}:${GID}" {} \;
+
+# Remove MyISAM
+grep -r MyISAM /flarum
+sed -i -e 's/MyISAM/InnoDB/g' /flarum/app/vendor/flarum/core/migrations/*
 
 exec su-exec "${UID}:${GID}" /bin/s6-svscan /services
